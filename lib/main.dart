@@ -2,10 +2,8 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:path/path.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:intl/intl.dart';
 import 'package:flutter_sound/flutter_sound.dart';
 
@@ -150,6 +148,9 @@ class _RecordsState extends State<Records> {
           : Icon(Icons.circle);
     }
 
+    String titleText = record.path.split('/').last.split('.').first;
+    Widget title = Text(titleText);
+
     Duration recordDuration = await soundHelper.duration(record.path);
     String recordDurationText;
     double sliderValue = 0.0;
@@ -196,7 +197,7 @@ class _RecordsState extends State<Records> {
 
     return ListTile(
       leading: leading,
-      title: Text(basenameWithoutExtension(_records.elementAt(index).path)),
+      title: title,
       subtitle: subtitle,
       trailing: trailing,
       selected: _selectedRecords.contains(_records.elementAt(index)),
@@ -219,7 +220,6 @@ class _RecordsState extends State<Records> {
       itemCount: _records.length,
       itemBuilder: (BuildContext context, int index) {
         if (index >= _records.length) return null;
-        // return _buildListTile(index);
         return FutureBuilder(
           future: _buildListTile(index),
           builder: (context, snapshot) {
@@ -346,12 +346,9 @@ class _RecorderState extends State<Recorder> {
   }
 
   Future<void> _startSoundRecorder() async {
-    final prefs = await SharedPreferences.getInstance();
-    int index = prefs.getInt('index') ?? 0;
-    index++;
-    prefs.setInt('index', index);
+    String name = DateFormat.jm().add_MMMd().format(DateTime.now());
     setState(() {
-      _recordPath = '${widget.recordsDirectory.path}/Record $index.aac';
+      _recordPath = '${widget.recordsDirectory.path}/$name.aac';
     });
     await _soundRecorder.openAudioSession();
     await _soundRecorder.startRecorder(
