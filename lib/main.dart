@@ -30,12 +30,10 @@ class _RecordsState extends State<Records> {
   Directory _recordsDirectory;
   Set<File> _records = Set<File>();
   Set<File> _selectedRecords = Set<File>();
-  FlutterSoundPlayer _soundPlayer = FlutterSoundPlayer();
-  StreamSubscription _soundPlayerSubscription;
-  bool _isAudioSessionOpened = false;
+  FlutterSoundPlayer _player = FlutterSoundPlayer();
   File _playingRecord;
-  String _playingRecordPositionText = '00:00';
-  double _playingRecordPosition = 0.0;
+  Duration _playingRecordDuration;
+  Duration _playingRecordPosition;
 
   @override
   void initState() {
@@ -45,8 +43,7 @@ class _RecordsState extends State<Records> {
 
   @override
   void dispose() {
-    _soundPlayer = null;
-    _soundPlayerSubscription = null;
+    _player = null;
     super.dispose();
   }
 
@@ -78,26 +75,23 @@ class _RecordsState extends State<Records> {
     });
   }
 
-  Future<void> _startSoundPlayer(File record) async {
-    if (!_isAudioSessionOpened) {
-      await _soundPlayer.openAudioSession();
-      await _soundPlayer.setSubscriptionDuration(Duration(milliseconds: 10));
-      setState(() {
-        _isAudioSessionOpened = true;
-      });
+  Future<void> _startPlayer(File record) async {
+    if (_playingRecord != null) {
+      await _stopPlayer();
     }
-    await _soundPlayer.startPlayer(
+    await _player.openAudioSession();
+    await _player.setSubscriptionDuration(Duration(milliseconds: 10));
+    await _player.startPlayer(
         fromURI: record.path,
         codec: Codec.aacADTS,
         whenFinished: () {
-          _stopSoundPlayer();
+          _stopPlayer();
         });
-    _soundPlayerSubscription = _soundPlayer.onProgress.listen((e) {
+    _player.onProgress.listen((e) {
       if (e != null) {
         setState(() {
-          _playingRecordPosition = e.position.inMilliseconds.toDouble();
-          _playingRecordPositionText = DateFormat('mm:ss').format(
-              DateTime.fromMillisecondsSinceEpoch(e.position.inMilliseconds));
+          _playingRecordDuration = e.duration;
+          _playingRecordPosition = e.position;
         });
       }
     });
@@ -106,132 +100,36 @@ class _RecordsState extends State<Records> {
     });
   }
 
-  Future<void> _seekSoundPlayer(double value) async {
-    if (_soundPlayer.isPlaying) {
-      await _soundPlayer.seekToPlayer(Duration(milliseconds: value.toInt()));
-    }
+  Future<void> _seekPlayer(double value) async {
+    await _player.seekToPlayer(Duration(milliseconds: value.toInt()));
   }
 
-  Future<void> _stopSoundPlayer() async {
-    if (_soundPlayer != null) {
-      await _soundPlayer.stopPlayer();
-      await _soundPlayer.closeAudioSession();
-      await _soundPlayerSubscription.cancel();
-      _soundPlayerSubscription = null;
-      setState(() {
-        _playingRecord = null;
-        _isAudioSessionOpened = false;
-      });
-    }
+  Future<void> _stopPlayer() async {
+    await _player.stopPlayer();
+    await _player.closeAudioSession();
+    setState(() {
+      _playingRecord = null;
+      _playingRecordDuration = null;
+      _playingRecordPosition = null;
+    });
   }
 
-  void _handleRecordSelection(int index) {
-    if (_selectedRecords.contains(_records.elementAt(index))) {
+  void _handlePlayingRecord(File record) {
+    setState(() {
+      _playingRecord = record;
+    });
+  }
+
+  void _handleRecordSelection(File record) {
+    if (_selectedRecords.contains(record)) {
       setState(() {
-        _selectedRecords.remove(_records.elementAt(index));
+        _selectedRecords.remove(record);
       });
     } else {
       setState(() {
-        _selectedRecords.add(_records.elementAt(index));
+        _selectedRecords.add(record);
       });
     }
-  }
-
-  Future<ListTile> _buildListTile(int index) async {
-    FlutterSoundHelper soundHelper = FlutterSoundHelper();
-    File record = _records.elementAt(index);
-
-    Widget leading;
-    if (_selectedRecords.isNotEmpty) {
-      leading = _selectedRecords.contains(record)
-          ? Icon(Icons.check_circle)
-          : Icon(Icons.circle);
-    }
-
-    String titleText = record.path.split('/').last.split('.').first;
-    Widget title = Text(titleText);
-
-    Duration recordDuration = await soundHelper.duration(record.path);
-    String recordDurationText;
-    double sliderValue = 0.0;
-    double sliderMax = recordDuration.inMilliseconds.toDouble();
-    ValueChanged<double> sliderChangeHandler;
-    if (record == _playingRecord) {
-      sliderValue = _playingRecordPosition;
-      recordDurationText = _playingRecordPositionText;
-      sliderChangeHandler = _seekSoundPlayer;
-    } else {
-      recordDurationText = DateFormat('mm:ss').format(
-          DateTime.fromMillisecondsSinceEpoch(recordDuration.inMilliseconds));
-    }
-    Widget subtitle;
-    subtitle = Row(
-      children: [
-        Slider(
-          value: sliderValue,
-          min: 0.0,
-          max: sliderMax,
-          onChanged: sliderChangeHandler,
-          divisions: sliderMax == 0.0 ? 1 : sliderMax.toInt(),
-        ),
-        Text(recordDurationText),
-      ],
-    );
-
-    Widget trailing;
-    if (_playingRecord == null || _playingRecord != record) {
-      trailing = IconButton(
-        icon: Icon(Icons.play_arrow),
-        onPressed: () {
-          _startSoundPlayer(record);
-        },
-      );
-    } else {
-      trailing = IconButton(
-        icon: Icon(Icons.stop),
-        onPressed: () {
-          _stopSoundPlayer();
-        },
-      );
-    }
-
-    return ListTile(
-      leading: leading,
-      title: title,
-      subtitle: subtitle,
-      trailing: trailing,
-      selected: _selectedRecords.contains(_records.elementAt(index)),
-      onTap: () {
-        if (_selectedRecords.isNotEmpty) {
-          _handleRecordSelection(index);
-        }
-      },
-      onLongPress: () {
-        if (_selectedRecords.isEmpty) {
-          _handleRecordSelection(index);
-        }
-      },
-    );
-  }
-
-  ListView _buildListView() {
-    return ListView.separated(
-      padding: const EdgeInsets.all(8),
-      itemCount: _records.length,
-      itemBuilder: (BuildContext context, int index) {
-        if (index >= _records.length) return null;
-        return FutureBuilder(
-          future: _buildListTile(index),
-          builder: (context, snapshot) {
-            if (snapshot.hasData) {
-              return snapshot.data;
-            }
-            return ListTile();
-          },
-        );
-      },
-      separatorBuilder: (context, index) => Divider(),
-    );
   }
 
   @override
@@ -279,9 +177,188 @@ class _RecordsState extends State<Records> {
         title: Text('Recorder'),
         actions: appBarActions,
       ),
-      body: _buildListView(),
+      body: ListView.separated(
+        padding: const EdgeInsets.all(8),
+        itemCount: _records.length,
+        itemBuilder: (BuildContext context, int index) {
+          if (index >= _records.length) return null;
+          return RecordListTile(
+            record: _records.elementAt(index),
+            player: _player,
+            playingRecord: _playingRecord,
+            playingRecordDuration: _playingRecordDuration,
+            playingRecordPosition: _playingRecordPosition,
+            handlePlayingRecord: _handlePlayingRecord,
+            isSelectable: _selectedRecords.isNotEmpty,
+            isSelected: _selectedRecords.contains(_records.elementAt(index)),
+            selectionHandler: _handleRecordSelection,
+            startPlayer: _startPlayer,
+            seekPlayer: _seekPlayer,
+            stopPlayer: _stopPlayer,
+            isPlaying: _records.elementAt(index) == _playingRecord,
+          );
+        },
+        separatorBuilder: (context, index) => Divider(),
+      ),
       floatingActionButton: NewRecordButton(
           recordsDirectory: _recordsDirectory, loadRecords: _loadRecords),
+    );
+  }
+}
+
+class RecordListTile extends StatefulWidget {
+  RecordListTile(
+      {Key key,
+      this.record,
+      this.player,
+      this.playingRecord,
+      this.playingRecordDuration,
+      this.playingRecordPosition,
+      this.handlePlayingRecord,
+      this.isSelectable,
+      this.isSelected,
+      this.selectionHandler,
+      this.startPlayer,
+      this.seekPlayer,
+      this.stopPlayer,
+      this.isPlaying})
+      : super(key: key);
+
+  File record;
+  FlutterSoundPlayer player;
+  File playingRecord;
+  Duration playingRecordDuration;
+  Duration playingRecordPosition;
+  ValueChanged<File> handlePlayingRecord;
+  bool isSelectable;
+  bool isSelected;
+  ValueChanged<File> selectionHandler;
+  ValueChanged<File> startPlayer;
+  ValueChanged<double> seekPlayer;
+  VoidCallback stopPlayer;
+  bool isPlaying;
+
+  @override
+  _RecordListTileState createState() => _RecordListTileState();
+}
+
+class _RecordListTileState extends State<RecordListTile> {
+  FlutterSoundHelper soundHelper = FlutterSoundHelper();
+  double _duration;
+  Duration _position;
+
+  String getRecordName() {
+    String millisecondsSinceEpochString = widget.record.path.split('/').last.split('.').first;
+    int millisecondsSinceEpoch = int.parse(millisecondsSinceEpochString);
+    DateTime dateTime = DateTime.fromMillisecondsSinceEpoch(millisecondsSinceEpoch);
+    return DateFormat.MMMd().add_jms().format(dateTime);
+  }
+
+  Future<void> _startPlayer(File record) async {
+    if (widget.playingRecord != null) {
+      await _stopPlayer();
+    }
+    await widget.player.openAudioSession();
+    await widget.player.setSubscriptionDuration(Duration(milliseconds: 10));
+    await widget.player.startPlayer(
+        fromURI: widget.record.path,
+        codec: Codec.aacADTS,
+        whenFinished: () {
+          _stopPlayer();
+        });
+    widget.player.onProgress.listen((e) {
+      if (e != null) {
+        setState(() {
+          _duration = e.duration.inMilliseconds.toDouble();
+          _position = e.position;
+        });
+      }
+    });
+    widget.handlePlayingRecord(record);
+  }
+
+  Future<void> _seekPlayer(double value) async {
+    if (widget.player.isPlaying) {
+      await widget.player.seekToPlayer(Duration(milliseconds: value.toInt()));
+    }
+  }
+
+  Future<void> _stopPlayer() async {
+    await widget.player.stopPlayer();
+    await widget.player.closeAudioSession();
+    widget.handlePlayingRecord(null);
+    setState(() {
+      _duration = null;
+      _position = null;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      selected: widget.isSelected,
+      leading: (widget.isSelectable
+          ? (widget.isSelected ? Icon(Icons.check_circle) : Icon(Icons.circle))
+          : null),
+      title: Text(getRecordName()),
+      subtitle: Row(
+        children: [
+          Slider(
+            value: (widget.isPlaying
+                ? widget.playingRecordPosition.inMilliseconds.toDouble()
+                : 0.0),
+            min: 0.0,
+            max: (widget.isPlaying
+                ? widget.playingRecordDuration.inMilliseconds.toDouble()
+                : 0.0),
+            onChanged: (widget.isPlaying ? widget.seekPlayer : null),
+            divisions: (widget.isPlaying
+                ? widget.playingRecordDuration.inMilliseconds
+                : 1),
+          ),
+          (widget.isPlaying
+              ? Text(DateFormat('mm:ss').format(
+                  DateTime.fromMillisecondsSinceEpoch(
+                      widget.playingRecordPosition.inMilliseconds)))
+              : FutureBuilder(
+                  future: soundHelper.duration(widget.record.path),
+                  builder: (context, snapshot) {
+                    String text = '..:..';
+                    if (snapshot.hasData) {
+                      text = DateFormat('mm:ss').format(
+                          DateTime.fromMillisecondsSinceEpoch(
+                              snapshot.data.inMilliseconds));
+                    }
+                    return Text(text);
+                  },
+                )),
+        ],
+      ),
+      trailing: widget.isPlaying
+          ? IconButton(
+              icon: Icon(Icons.stop),
+              onPressed: () {
+                // _stopPlayer();
+                widget.stopPlayer();
+              },
+            )
+          : IconButton(
+              icon: Icon(Icons.play_arrow),
+              onPressed: () {
+                // _startPlayer(widget.record);
+                widget.startPlayer(widget.record);
+              },
+            ),
+      onLongPress: () {
+        if (!widget.isSelectable) {
+          widget.selectionHandler(widget.record);
+        }
+      },
+      onTap: () {
+        if (widget.isSelectable) {
+          widget.selectionHandler(widget.record);
+        }
+      },
     );
   }
 }
@@ -326,8 +403,7 @@ class Recorder extends StatefulWidget {
 }
 
 class _RecorderState extends State<Recorder> {
-  FlutterSoundRecorder _soundRecorder = FlutterSoundRecorder();
-  StreamSubscription _soundRecorderSubscription;
+  FlutterSoundRecorder _recorder = FlutterSoundRecorder();
   String _recordPath;
   String _recordDuration = '00:00';
   bool _isRecording = false;
@@ -335,27 +411,26 @@ class _RecorderState extends State<Recorder> {
   @override
   void initState() {
     super.initState();
-    _startSoundRecorder();
+    _startRecorder();
   }
 
   @override
   void dispose() async {
-    _soundRecorder = null;
-    _soundRecorderSubscription = null;
+    _recorder = null;
     super.dispose();
   }
 
-  Future<void> _startSoundRecorder() async {
-    String name = DateFormat.jm().add_MMMd().format(DateTime.now());
+  Future<void> _startRecorder() async {
+    int millisecondsSinceEpoch = DateTime.now().millisecondsSinceEpoch;
     setState(() {
-      _recordPath = '${widget.recordsDirectory.path}/$name.aac';
+      _recordPath = '${widget.recordsDirectory.path}/$millisecondsSinceEpoch.aac';
     });
-    await _soundRecorder.openAudioSession();
-    await _soundRecorder.startRecorder(
+    await _recorder.openAudioSession();
+    await _recorder.startRecorder(
       toFile: _recordPath,
       codec: Codec.aacADTS,
     );
-    _soundRecorderSubscription = _soundRecorder.onProgress.listen((e) {
+    _recorder.onProgress.listen((e) {
       if (e != null && e.duration != null) {
         setState(() {
           _recordDuration = DateFormat('mm:ss').format(
@@ -368,24 +443,23 @@ class _RecorderState extends State<Recorder> {
     });
   }
 
-  Future<void> _pauseSoundRecorder() async {
-    await _soundRecorder.pauseRecorder();
+  Future<void> _pauseRecorder() async {
+    await _recorder.pauseRecorder();
     setState(() {
       _isRecording = false;
     });
   }
 
-  Future<void> _resumeSoundRecorder() async {
-    await _soundRecorder.resumeRecorder();
+  Future<void> _resumeRecorder() async {
+    await _recorder.resumeRecorder();
     setState(() {
       _isRecording = true;
     });
   }
 
-  Future<void> _stopSoundRecorder(BuildContext context) async {
-    await _soundRecorder.stopRecorder();
-    await _soundRecorder.closeAudioSession();
-    await _soundRecorderSubscription.cancel();
+  Future<void> _stopRecorder(BuildContext context) async {
+    await _recorder.stopRecorder();
+    await _recorder.closeAudioSession();
     setState(() {
       _isRecording = false;
     });
@@ -393,9 +467,8 @@ class _RecorderState extends State<Recorder> {
   }
 
   Future<void> _deleteRecord(BuildContext context) async {
-    await _soundRecorder.stopRecorder();
-    await _soundRecorder.closeAudioSession();
-    await _soundRecorderSubscription.cancel();
+    await _recorder.stopRecorder();
+    await _recorder.closeAudioSession();
     setState(() {
       _isRecording = false;
     });
@@ -422,13 +495,13 @@ class _RecorderState extends State<Recorder> {
                   child: Icon(Icons.delete)),
               ElevatedButton(
                   onPressed: (_isRecording
-                      ? _pauseSoundRecorder
-                      : _resumeSoundRecorder),
+                      ? _pauseRecorder
+                      : _resumeRecorder),
                   child: (_isRecording
                       ? Icon(Icons.pause)
                       : Icon(Icons.play_arrow))),
               ElevatedButton(
-                  onPressed: () => _stopSoundRecorder(context),
+                  onPressed: () => _stopRecorder(context),
                   child: Icon(Icons.save)),
             ],
           ),
