@@ -224,19 +224,19 @@ class RecordListTile extends StatefulWidget {
       this.isPlaying})
       : super(key: key);
 
-  File record;
-  FlutterSoundPlayer player;
-  File playingRecord;
-  Duration playingRecordDuration;
-  Duration playingRecordPosition;
-  ValueChanged<File> handlePlayingRecord;
-  bool isSelectable;
-  bool isSelected;
-  ValueChanged<File> selectionHandler;
-  ValueChanged<File> startPlayer;
-  ValueChanged<double> seekPlayer;
-  VoidCallback stopPlayer;
-  bool isPlaying;
+  final File record;
+  final FlutterSoundPlayer player;
+  final File playingRecord;
+  final Duration playingRecordDuration;
+  final Duration playingRecordPosition;
+  final ValueChanged<File> handlePlayingRecord;
+  final bool isSelectable;
+  final bool isSelected;
+  final ValueChanged<File> selectionHandler;
+  final ValueChanged<File> startPlayer;
+  final ValueChanged<double> seekPlayer;
+  final VoidCallback stopPlayer;
+  final bool isPlaying;
 
   @override
   _RecordListTileState createState() => _RecordListTileState();
@@ -244,53 +244,12 @@ class RecordListTile extends StatefulWidget {
 
 class _RecordListTileState extends State<RecordListTile> {
   FlutterSoundHelper soundHelper = FlutterSoundHelper();
-  double _duration;
-  Duration _position;
 
   String getRecordName() {
     String millisecondsSinceEpochString = widget.record.path.split('/').last.split('.').first;
     int millisecondsSinceEpoch = int.parse(millisecondsSinceEpochString);
     DateTime dateTime = DateTime.fromMillisecondsSinceEpoch(millisecondsSinceEpoch);
     return DateFormat.MMMd().add_jms().format(dateTime);
-  }
-
-  Future<void> _startPlayer(File record) async {
-    if (widget.playingRecord != null) {
-      await _stopPlayer();
-    }
-    await widget.player.openAudioSession();
-    await widget.player.setSubscriptionDuration(Duration(milliseconds: 10));
-    await widget.player.startPlayer(
-        fromURI: widget.record.path,
-        codec: Codec.aacADTS,
-        whenFinished: () {
-          _stopPlayer();
-        });
-    widget.player.onProgress.listen((e) {
-      if (e != null) {
-        setState(() {
-          _duration = e.duration.inMilliseconds.toDouble();
-          _position = e.position;
-        });
-      }
-    });
-    widget.handlePlayingRecord(record);
-  }
-
-  Future<void> _seekPlayer(double value) async {
-    if (widget.player.isPlaying) {
-      await widget.player.seekToPlayer(Duration(milliseconds: value.toInt()));
-    }
-  }
-
-  Future<void> _stopPlayer() async {
-    await widget.player.stopPlayer();
-    await widget.player.closeAudioSession();
-    widget.handlePlayingRecord(null);
-    setState(() {
-      _duration = null;
-      _position = null;
-    });
   }
 
   @override
@@ -338,14 +297,12 @@ class _RecordListTileState extends State<RecordListTile> {
           ? IconButton(
               icon: Icon(Icons.stop),
               onPressed: () {
-                // _stopPlayer();
                 widget.stopPlayer();
               },
             )
           : IconButton(
               icon: Icon(Icons.play_arrow),
               onPressed: () {
-                // _startPlayer(widget.record);
                 widget.startPlayer(widget.record);
               },
             ),
