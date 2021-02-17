@@ -5,7 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:intl/intl.dart';
-import 'package:flutter_sound/flutter_sound.dart';
+import 'package:audioplayers/audioplayers.dart';
+import 'package:flutter_audio_recorder/flutter_audio_recorder.dart';
 
 void main() {
   runApp(App());
@@ -30,10 +31,13 @@ class _RecordsState extends State<Records> {
   Directory _recordsDirectory;
   Set<File> _records = Set<File>();
   Set<File> _selectedRecords = Set<File>();
-  FlutterSoundPlayer _player = FlutterSoundPlayer();
   File _playingRecord;
-  Duration _playingRecordDuration;
-  Duration _playingRecordPosition;
+  Duration _playingRecordDuration = Duration(milliseconds: 0);
+  Duration _playingRecordPosition = Duration(milliseconds: 0);
+  AudioPlayer _player = AudioPlayer();
+  StreamSubscription<Duration> _playerDurationStream;
+  StreamSubscription<Duration> _playerPositionStream;
+  StreamSubscription<void> _playerCompletionStream;
 
   @override
   void initState() {
@@ -43,7 +47,6 @@ class _RecordsState extends State<Records> {
 
   @override
   void dispose() {
-    _player = null;
     super.dispose();
   }
 
@@ -79,38 +82,40 @@ class _RecordsState extends State<Records> {
     if (_playingRecord != null) {
       await _stopPlayer();
     }
-    await _player.openAudioSession();
-    await _player.setSubscriptionDuration(Duration(milliseconds: 10));
-    await _player.startPlayer(
-        fromURI: record.path,
-        codec: Codec.aacADTS,
-        whenFinished: () {
-          _stopPlayer();
-        });
-    _player.onProgress.listen((e) {
-      if (e != null) {
-        setState(() {
-          _playingRecordDuration = e.duration;
-          _playingRecordPosition = e.position;
-        });
-      }
+
+    int result = await _player.play(record.path, isLocal: true);
+    _playerDurationStream = _player.onDurationChanged.listen((Duration d) {
+      setState(() => _playingRecordDuration = d);
     });
+    _playerPositionStream = _player.onAudioPositionChanged.listen((Duration  p) {
+        setState(() => _playingRecordPosition = p);
+    });
+    _playerCompletionStream = _player.onPlayerCompletion.listen((event) {
+      _stopPlayer();
+    });
+
     setState(() {
       _playingRecord = record;
     });
   }
 
   Future<void> _seekPlayer(double value) async {
-    await _player.seekToPlayer(Duration(milliseconds: value.toInt()));
+    int result = await _player.seek(Duration(milliseconds: value.toInt()));
   }
 
   Future<void> _stopPlayer() async {
-    await _player.stopPlayer();
-    await _player.closeAudioSession();
+    int result = await _player.stop();
+    await _playerDurationStream.cancel();
+    _playerDurationStream = null;
+    await _playerPositionStream.cancel();
+    _playerPositionStream = null;
+    await _playerCompletionStream.cancel();
+    _playerCompletionStream = null;
+
     setState(() {
       _playingRecord = null;
-      _playingRecordDuration = null;
-      _playingRecordPosition = null;
+      _playingRecordDuration = Duration(milliseconds: 0);
+      _playingRecordPosition = Duration(milliseconds: 0);
     });
   }
 
@@ -225,7 +230,7 @@ class RecordListTile extends StatefulWidget {
       : super(key: key);
 
   final File record;
-  final FlutterSoundPlayer player;
+  final AudioPlayer player;
   final File playingRecord;
   final Duration playingRecordDuration;
   final Duration playingRecordPosition;
@@ -243,13 +248,19 @@ class RecordListTile extends StatefulWidget {
 }
 
 class _RecordListTileState extends State<RecordListTile> {
-  FlutterSoundHelper soundHelper = FlutterSoundHelper();
-
   String getRecordName() {
     String millisecondsSinceEpochString = widget.record.path.split('/').last.split('.').first;
     int millisecondsSinceEpoch = int.parse(millisecondsSinceEpochString);
     DateTime dateTime = DateTime.fromMillisecondsSinceEpoch(millisecondsSinceEpoch);
     return DateFormat.MMMd().add_jms().format(dateTime);
+  }
+
+  Future<Duration> getRecordDuration() async {
+    AudioPlayer audioPlayer = AudioPlayer();
+    await audioPlayer.setUrl(widget.record.path);
+    int milliseconds = await audioPlayer.getDuration();
+    audioPlayer = null;
+    return Duration(milliseconds: milliseconds);
   }
 
   @override
@@ -271,7 +282,7 @@ class _RecordListTileState extends State<RecordListTile> {
                 ? widget.playingRecordDuration.inMilliseconds.toDouble()
                 : 0.0),
             onChanged: (widget.isPlaying ? widget.seekPlayer : null),
-            divisions: (widget.isPlaying
+            divisions: ((widget.isPlaying && widget.playingRecordDuration.inMilliseconds > 0)
                 ? widget.playingRecordDuration.inMilliseconds
                 : 1),
           ),
@@ -280,7 +291,7 @@ class _RecordListTileState extends State<RecordListTile> {
                   DateTime.fromMillisecondsSinceEpoch(
                       widget.playingRecordPosition.inMilliseconds)))
               : FutureBuilder(
-                  future: soundHelper.duration(widget.record.path),
+                  future: getRecordDuration(),
                   builder: (context, snapshot) {
                     String text = '..:..';
                     if (snapshot.hasData) {
@@ -360,9 +371,9 @@ class Recorder extends StatefulWidget {
 }
 
 class _RecorderState extends State<Recorder> {
-  FlutterSoundRecorder _recorder = FlutterSoundRecorder();
-  String _recordPath;
-  String _recordDuration = '00:00';
+  FlutterAudioRecorder _recorder;
+  Timer _timer;
+  Duration _recordDuration = Duration(milliseconds: 0);
   bool _isRecording = false;
 
   @override
@@ -379,21 +390,14 @@ class _RecorderState extends State<Recorder> {
 
   Future<void> _startRecorder() async {
     int millisecondsSinceEpoch = DateTime.now().millisecondsSinceEpoch;
-    setState(() {
-      _recordPath = '${widget.recordsDirectory.path}/$millisecondsSinceEpoch.aac';
-    });
-    await _recorder.openAudioSession();
-    await _recorder.startRecorder(
-      toFile: _recordPath,
-      codec: Codec.aacADTS,
-    );
-    _recorder.onProgress.listen((e) {
-      if (e != null && e.duration != null) {
-        setState(() {
-          _recordDuration = DateFormat('mm:ss').format(
-              DateTime.fromMillisecondsSinceEpoch(e.duration.inMilliseconds));
-        });
-      }
+    _recorder = FlutterAudioRecorder('${widget.recordsDirectory.path}/$millisecondsSinceEpoch', audioFormat: AudioFormat.AAC); // or AudioFormat.WAV
+    await _recorder.initialized;
+    await _recorder.start();
+    _timer = Timer.periodic(Duration(milliseconds: 50), (Timer t) async {
+      var current = await _recorder.current(channel: 0);
+      setState(() {
+        _recordDuration = current.duration;
+      });
     });
     setState(() {
       _isRecording = true;
@@ -401,36 +405,36 @@ class _RecorderState extends State<Recorder> {
   }
 
   Future<void> _pauseRecorder() async {
-    await _recorder.pauseRecorder();
+    await _recorder.pause();
     setState(() {
       _isRecording = false;
     });
   }
 
   Future<void> _resumeRecorder() async {
-    await _recorder.resumeRecorder();
+    await _recorder.resume();
     setState(() {
       _isRecording = true;
     });
   }
 
-  Future<void> _stopRecorder(BuildContext context) async {
-    await _recorder.stopRecorder();
-    await _recorder.closeAudioSession();
+  Future<dynamic> _stopRecorder() async {
+    var result = await _recorder.stop();
+    _timer.cancel();
     setState(() {
       _isRecording = false;
     });
+    return result;
+  }
+
+  Future<void> _saveRecord(BuildContext context) async {
+    await _stopRecorder();
     Navigator.pop(context);
   }
 
   Future<void> _deleteRecord(BuildContext context) async {
-    await _recorder.stopRecorder();
-    await _recorder.closeAudioSession();
-    setState(() {
-      _isRecording = false;
-    });
-    File record = File(_recordPath);
-    await record.delete();
+    var result = await _stopRecorder();
+    await File(result.path).delete();
     Navigator.pop(context);
   }
 
@@ -443,7 +447,7 @@ class _RecorderState extends State<Recorder> {
       body: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Text(_recordDuration),
+          Text(DateFormat('mm:ss').format(DateTime.fromMillisecondsSinceEpoch(_recordDuration.inMilliseconds))),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: [
@@ -458,7 +462,7 @@ class _RecorderState extends State<Recorder> {
                       ? Icon(Icons.pause)
                       : Icon(Icons.play_arrow))),
               ElevatedButton(
-                  onPressed: () => _stopRecorder(context),
+                  onPressed: () => _saveRecord(context),
                   child: Icon(Icons.save)),
             ],
           ),
