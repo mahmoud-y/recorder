@@ -35,9 +35,9 @@ class _RecordsState extends State<Records> {
   Duration _playingRecordDuration = Duration(milliseconds: 0);
   Duration _playingRecordPosition = Duration(milliseconds: 0);
   AudioPlayer _player = AudioPlayer();
-  StreamSubscription<Duration> _playerDurationStream;
-  StreamSubscription<Duration> _playerPositionStream;
-  StreamSubscription<void> _playerCompletionStream;
+  StreamSubscription<Duration> _durationSubscription;
+  StreamSubscription<Duration> _positionSubscription;
+  StreamSubscription<void> _completionSubscription;
 
   @override
   void initState() {
@@ -82,36 +82,30 @@ class _RecordsState extends State<Records> {
     if (_playingRecord != null) {
       await _stopPlayer();
     }
-
-    int result = await _player.play(record.path, isLocal: true);
-    _playerDurationStream = _player.onDurationChanged.listen((Duration d) {
+    await _player.play(record.path, isLocal: true);
+    _durationSubscription = _player.onDurationChanged.listen((Duration d) {
       setState(() => _playingRecordDuration = d);
     });
-    _playerPositionStream = _player.onAudioPositionChanged.listen((Duration  p) {
-        setState(() => _playingRecordPosition = p);
+    _positionSubscription = _player.onAudioPositionChanged.listen((Duration p) {
+      setState(() => _playingRecordPosition = p);
     });
-    _playerCompletionStream = _player.onPlayerCompletion.listen((event) {
+    _completionSubscription = _player.onPlayerCompletion.listen((event) {
       _stopPlayer();
     });
-
     setState(() {
       _playingRecord = record;
     });
   }
 
   Future<void> _seekPlayer(double value) async {
-    int result = await _player.seek(Duration(milliseconds: value.toInt()));
+    await _player.seek(Duration(milliseconds: value.toInt()));
   }
 
   Future<void> _stopPlayer() async {
-    int result = await _player.stop();
-    await _playerDurationStream.cancel();
-    _playerDurationStream = null;
-    await _playerPositionStream.cancel();
-    _playerPositionStream = null;
-    await _playerCompletionStream.cancel();
-    _playerCompletionStream = null;
-
+    await _player.stop();
+    await _durationSubscription.cancel();
+    await _positionSubscription.cancel();
+    await _completionSubscription.cancel();
     setState(() {
       _playingRecord = null;
       _playingRecordDuration = Duration(milliseconds: 0);
@@ -164,7 +158,8 @@ class _RecordsState extends State<Records> {
       appBarActions.add(IconButton(
         icon: const Icon(Icons.delete),
         tooltip: 'Delete',
-        onPressed: () {
+        onPressed: () async {
+          await _stopPlayer();
           _selectedRecords.forEach((record) {
             record.delete();
           });
@@ -249,22 +244,53 @@ class RecordListTile extends StatefulWidget {
 
 class _RecordListTileState extends State<RecordListTile> {
   String getRecordName() {
-    String millisecondsSinceEpochString = widget.record.path.split('/').last.split('.').first;
+    String millisecondsSinceEpochString =
+        widget.record.path.split('/').last.split('.').first;
     int millisecondsSinceEpoch = int.parse(millisecondsSinceEpochString);
-    DateTime dateTime = DateTime.fromMillisecondsSinceEpoch(millisecondsSinceEpoch);
+    DateTime dateTime =
+        DateTime.fromMillisecondsSinceEpoch(millisecondsSinceEpoch);
     return DateFormat.MMMd().add_jms().format(dateTime);
   }
 
   Future<Duration> getRecordDuration() async {
     AudioPlayer audioPlayer = AudioPlayer();
     await audioPlayer.setUrl(widget.record.path);
-    int milliseconds = await audioPlayer.getDuration();
-    audioPlayer = null;
-    return Duration(milliseconds: milliseconds);
+    await for (var d in audioPlayer.onDurationChanged) {
+      return d;
+    }
+    return Duration(milliseconds: 0);
   }
 
   @override
   Widget build(BuildContext context) {
+    List<Widget> subtitleRowChildren = List<Widget>();
+    if (widget.isPlaying) {
+      subtitleRowChildren.addAll([
+        Slider(
+          value: widget.playingRecordPosition.inMilliseconds.toDouble(),
+          min: 0.0,
+          max: widget.playingRecordDuration.inMilliseconds.toDouble(),
+          onChanged: widget.seekPlayer,
+          divisions: (widget.playingRecordDuration.inMilliseconds > 0 ? widget.playingRecordDuration.inMilliseconds : 1),
+        ),
+        Text(DateFormat('mm:ss').format(
+          DateTime.fromMillisecondsSinceEpoch(
+              widget.playingRecordPosition.inMilliseconds))),
+      ]);
+    } else {
+      subtitleRowChildren.add(FutureBuilder(
+        future: getRecordDuration(),
+        builder: (context, snapshot) {
+          String text = '..:..';
+          if (snapshot.hasData) {
+            text = DateFormat('mm:ss').format(
+                DateTime.fromMillisecondsSinceEpoch(
+                    snapshot.data.inMilliseconds));
+          }
+          return Text(text);
+        },
+      ));
+    }
     return ListTile(
       selected: widget.isSelected,
       leading: (widget.isSelectable
@@ -272,41 +298,11 @@ class _RecordListTileState extends State<RecordListTile> {
           : null),
       title: Text(getRecordName()),
       subtitle: Row(
-        children: [
-          Slider(
-            value: (widget.isPlaying
-                ? widget.playingRecordPosition.inMilliseconds.toDouble()
-                : 0.0),
-            min: 0.0,
-            max: (widget.isPlaying
-                ? widget.playingRecordDuration.inMilliseconds.toDouble()
-                : 0.0),
-            onChanged: (widget.isPlaying ? widget.seekPlayer : null),
-            divisions: ((widget.isPlaying && widget.playingRecordDuration.inMilliseconds > 0)
-                ? widget.playingRecordDuration.inMilliseconds
-                : 1),
-          ),
-          (widget.isPlaying
-              ? Text(DateFormat('mm:ss').format(
-                  DateTime.fromMillisecondsSinceEpoch(
-                      widget.playingRecordPosition.inMilliseconds)))
-              : FutureBuilder(
-                  future: getRecordDuration(),
-                  builder: (context, snapshot) {
-                    String text = '..:..';
-                    if (snapshot.hasData) {
-                      text = DateFormat('mm:ss').format(
-                          DateTime.fromMillisecondsSinceEpoch(
-                              snapshot.data.inMilliseconds));
-                    }
-                    return Text(text);
-                  },
-                )),
-        ],
+        children: subtitleRowChildren,
       ),
       trailing: widget.isPlaying
           ? IconButton(
-              icon: Icon(Icons.stop),
+              icon: Icon(Icons.pause),
               onPressed: () {
                 widget.stopPlayer();
               },
@@ -390,7 +386,9 @@ class _RecorderState extends State<Recorder> {
 
   Future<void> _startRecorder() async {
     int millisecondsSinceEpoch = DateTime.now().millisecondsSinceEpoch;
-    _recorder = FlutterAudioRecorder('${widget.recordsDirectory.path}/$millisecondsSinceEpoch', audioFormat: AudioFormat.AAC); // or AudioFormat.WAV
+    _recorder = FlutterAudioRecorder(
+        '${widget.recordsDirectory.path}/$millisecondsSinceEpoch',
+        audioFormat: AudioFormat.AAC);
     await _recorder.initialized;
     await _recorder.start();
     _timer = Timer.periodic(Duration(milliseconds: 50), (Timer t) async {
@@ -447,7 +445,8 @@ class _RecorderState extends State<Recorder> {
       body: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Text(DateFormat('mm:ss').format(DateTime.fromMillisecondsSinceEpoch(_recordDuration.inMilliseconds))),
+          Text(DateFormat('mm:ss').format(DateTime.fromMillisecondsSinceEpoch(
+              _recordDuration.inMilliseconds))),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: [
@@ -455,9 +454,7 @@ class _RecorderState extends State<Recorder> {
                   onPressed: () => _deleteRecord(context),
                   child: Icon(Icons.delete)),
               ElevatedButton(
-                  onPressed: (_isRecording
-                      ? _pauseRecorder
-                      : _resumeRecorder),
+                  onPressed: (_isRecording ? _pauseRecorder : _resumeRecorder),
                   child: (_isRecording
                       ? Icon(Icons.pause)
                       : Icon(Icons.play_arrow))),
