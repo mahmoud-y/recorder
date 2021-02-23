@@ -113,12 +113,6 @@ class _RecordsState extends State<Records> {
     });
   }
 
-  void _handlePlayingRecord(File record) {
-    setState(() {
-      _playingRecord = record;
-    });
-  }
-
   void _handleRecordSelection(File record) {
     if (_selectedRecords.contains(record)) {
       setState(() {
@@ -129,6 +123,22 @@ class _RecordsState extends State<Records> {
         _selectedRecords.add(record);
       });
     }
+  }
+
+  String getRecordName(File record) {
+    String millisecondsSinceEpochString = record.path.split('/').last.split('.').first;
+    int millisecondsSinceEpoch = int.parse(millisecondsSinceEpochString);
+    DateTime dateTime = DateTime.fromMillisecondsSinceEpoch(millisecondsSinceEpoch);
+    return DateFormat.MMMd().add_jms().format(dateTime);
+  }
+
+  Future<Duration> getRecordDuration(File record) async {
+    AudioPlayer audioPlayer = AudioPlayer();
+    await audioPlayer.setUrl(record.path);
+    await for (var d in audioPlayer.onDurationChanged) {
+      return d;
+    }
+    return Duration(milliseconds: 0);
   }
 
   @override
@@ -158,10 +168,9 @@ class _RecordsState extends State<Records> {
       appBarActions.add(IconButton(
         icon: const Icon(Icons.delete),
         tooltip: 'Delete',
-        onPressed: () async {
-          await _stopPlayer();
-          _selectedRecords.forEach((record) {
-            record.delete();
+        onPressed: () {
+          _selectedRecords.forEach((record) async {
+            await record.delete();
           });
           setState(() {
             _selectedRecords.clear();
@@ -182,177 +191,94 @@ class _RecordsState extends State<Records> {
         itemCount: _records.length,
         itemBuilder: (BuildContext context, int index) {
           if (index >= _records.length) return null;
-          return RecordListTile(
-            record: _records.elementAt(index),
-            player: _player,
-            playingRecord: _playingRecord,
-            playingRecordDuration: _playingRecordDuration,
-            playingRecordPosition: _playingRecordPosition,
-            handlePlayingRecord: _handlePlayingRecord,
-            isSelectable: _selectedRecords.isNotEmpty,
-            isSelected: _selectedRecords.contains(_records.elementAt(index)),
-            selectionHandler: _handleRecordSelection,
-            startPlayer: _startPlayer,
-            seekPlayer: _seekPlayer,
-            stopPlayer: _stopPlayer,
-            isPlaying: _records.elementAt(index) == _playingRecord,
+
+          File record = _records.elementAt(index);
+          List<Widget> subtitleRowChildren = List<Widget>();
+          if (record == _playingRecord) {
+            subtitleRowChildren.addAll([
+              Slider(
+                value: _playingRecordPosition.inMilliseconds.toDouble(),
+                min: 0.0,
+                max: _playingRecordDuration.inMilliseconds.toDouble(),
+                onChanged: _seekPlayer,
+                divisions: (_playingRecordDuration.inMilliseconds > 0 ? _playingRecordDuration.inMilliseconds : 1),
+              ),
+              Text(DateFormat('mm:ss').format(
+                  DateTime.fromMillisecondsSinceEpoch(
+                      _playingRecordPosition.inMilliseconds))),
+            ]);
+          } else {
+            subtitleRowChildren.add(FutureBuilder(
+              future: getRecordDuration(record),
+              builder: (context, snapshot) {
+                String text = '..:..';
+                if (snapshot.hasData) {
+                  text = DateFormat('mm:ss').format(
+                      DateTime.fromMillisecondsSinceEpoch(
+                          snapshot.data.inMilliseconds));
+                }
+                return Text(text);
+              },
+            ));
+          }
+          return ListTile(
+            selected: _selectedRecords.contains(record),
+            leading: (_selectedRecords.isNotEmpty
+                ? (_selectedRecords.contains(record) ? Icon(Icons.check_circle) : Icon(Icons.circle))
+                : null),
+            title: Text(getRecordName(record)),
+            subtitle: Row(
+              children: subtitleRowChildren,
+            ),
+            trailing: (record == _playingRecord)
+                ? IconButton(
+              icon: Icon(Icons.pause),
+              onPressed: () {
+                _stopPlayer();
+              },
+            )
+                : IconButton(
+              icon: Icon(Icons.play_arrow),
+              onPressed: () {
+                _startPlayer(record);
+              },
+            ),
+            onLongPress: () {
+              if (_selectedRecords.isEmpty) {
+                _handleRecordSelection(record);
+              }
+            },
+            onTap: () {
+              if (_selectedRecords.isNotEmpty) {
+                _handleRecordSelection(record);
+              }
+            },
           );
         },
         separatorBuilder: (context, index) => Divider(),
       ),
-      floatingActionButton: NewRecordButton(
-          recordsDirectory: _recordsDirectory, loadRecords: _loadRecords),
-    );
-  }
-}
-
-class RecordListTile extends StatefulWidget {
-  RecordListTile(
-      {Key key,
-      this.record,
-      this.player,
-      this.playingRecord,
-      this.playingRecordDuration,
-      this.playingRecordPosition,
-      this.handlePlayingRecord,
-      this.isSelectable,
-      this.isSelected,
-      this.selectionHandler,
-      this.startPlayer,
-      this.seekPlayer,
-      this.stopPlayer,
-      this.isPlaying})
-      : super(key: key);
-
-  final File record;
-  final AudioPlayer player;
-  final File playingRecord;
-  final Duration playingRecordDuration;
-  final Duration playingRecordPosition;
-  final ValueChanged<File> handlePlayingRecord;
-  final bool isSelectable;
-  final bool isSelected;
-  final ValueChanged<File> selectionHandler;
-  final ValueChanged<File> startPlayer;
-  final ValueChanged<double> seekPlayer;
-  final VoidCallback stopPlayer;
-  final bool isPlaying;
-
-  @override
-  _RecordListTileState createState() => _RecordListTileState();
-}
-
-class _RecordListTileState extends State<RecordListTile> {
-  String getRecordName() {
-    String millisecondsSinceEpochString =
-        widget.record.path.split('/').last.split('.').first;
-    int millisecondsSinceEpoch = int.parse(millisecondsSinceEpochString);
-    DateTime dateTime =
-        DateTime.fromMillisecondsSinceEpoch(millisecondsSinceEpoch);
-    return DateFormat.MMMd().add_jms().format(dateTime);
-  }
-
-  Future<Duration> getRecordDuration() async {
-    AudioPlayer audioPlayer = AudioPlayer();
-    await audioPlayer.setUrl(widget.record.path);
-    await for (var d in audioPlayer.onDurationChanged) {
-      return d;
-    }
-    return Duration(milliseconds: 0);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    List<Widget> subtitleRowChildren = List<Widget>();
-    if (widget.isPlaying) {
-      subtitleRowChildren.addAll([
-        Slider(
-          value: widget.playingRecordPosition.inMilliseconds.toDouble(),
-          min: 0.0,
-          max: widget.playingRecordDuration.inMilliseconds.toDouble(),
-          onChanged: widget.seekPlayer,
-          divisions: (widget.playingRecordDuration.inMilliseconds > 0 ? widget.playingRecordDuration.inMilliseconds : 1),
-        ),
-        Text(DateFormat('mm:ss').format(
-          DateTime.fromMillisecondsSinceEpoch(
-              widget.playingRecordPosition.inMilliseconds))),
-      ]);
-    } else {
-      subtitleRowChildren.add(FutureBuilder(
-        future: getRecordDuration(),
-        builder: (context, snapshot) {
-          String text = '..:..';
-          if (snapshot.hasData) {
-            text = DateFormat('mm:ss').format(
-                DateTime.fromMillisecondsSinceEpoch(
-                    snapshot.data.inMilliseconds));
-          }
-          return Text(text);
-        },
-      ));
-    }
-    return ListTile(
-      selected: widget.isSelected,
-      leading: (widget.isSelectable
-          ? (widget.isSelected ? Icon(Icons.check_circle) : Icon(Icons.circle))
-          : null),
-      title: Text(getRecordName()),
-      subtitle: Row(
-        children: subtitleRowChildren,
-      ),
-      trailing: widget.isPlaying
-          ? IconButton(
-              icon: Icon(Icons.pause),
-              onPressed: () {
-                widget.stopPlayer();
-              },
-            )
-          : IconButton(
-              icon: Icon(Icons.play_arrow),
-              onPressed: () {
-                widget.startPlayer(widget.record);
-              },
-            ),
-      onLongPress: () {
-        if (!widget.isSelectable) {
-          widget.selectionHandler(widget.record);
-        }
-      },
-      onTap: () {
-        if (widget.isSelectable) {
-          widget.selectionHandler(widget.record);
-        }
-      },
-    );
-  }
-}
-
-class NewRecordButton extends StatelessWidget {
-  NewRecordButton({Key key, this.recordsDirectory, this.loadRecords})
-      : super(key: key);
-
-  final Directory recordsDirectory;
-  final VoidCallback loadRecords;
-
-  @override
-  Widget build(BuildContext context) {
-    return FloatingActionButton(
-      tooltip: 'Record',
-      child: Icon(Icons.mic),
-      onPressed: () async {
-        if (await Permission.microphone.request().isGranted) {
-          await Navigator.push(
-            context,
-            MaterialPageRoute(
-                builder: (context) =>
-                    Recorder(recordsDirectory: recordsDirectory)),
+      floatingActionButton: Builder(
+        builder: (context) {
+          return FloatingActionButton(
+            tooltip: 'Record',
+            child: Icon(Icons.mic),
+            onPressed: () async {
+              if (await Permission.microphone.request().isGranted) {
+                await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                      builder: (context) =>
+                          Recorder(recordsDirectory: _recordsDirectory)),
+                );
+                _loadRecords();
+              } else {
+                Scaffold.of(context).showSnackBar(
+                    SnackBar(content: Text('microphone permission denied')));
+              }
+            },
           );
-          loadRecords();
-        } else {
-          Scaffold.of(context).showSnackBar(
-              SnackBar(content: Text('microphone permission denied')));
-        }
-      },
+        },
+      ),
     );
   }
 }
@@ -379,8 +305,7 @@ class _RecorderState extends State<Recorder> {
   }
 
   @override
-  void dispose() async {
-    _recorder = null;
+  Future<void> dispose() async {
     super.dispose();
   }
 
