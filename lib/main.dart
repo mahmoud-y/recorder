@@ -126,9 +126,11 @@ class _RecordsState extends State<Records> {
   }
 
   String getRecordName(File record) {
-    String millisecondsSinceEpochString = record.path.split('/').last.split('.').first;
+    String millisecondsSinceEpochString =
+        record.path.split('/').last.split('.').first;
     int millisecondsSinceEpoch = int.parse(millisecondsSinceEpochString);
-    DateTime dateTime = DateTime.fromMillisecondsSinceEpoch(millisecondsSinceEpoch);
+    DateTime dateTime =
+        DateTime.fromMillisecondsSinceEpoch(millisecondsSinceEpoch);
     return DateFormat.MMMd().add_jms().format(dateTime);
   }
 
@@ -196,16 +198,18 @@ class _RecordsState extends State<Records> {
           List<Widget> subtitleRowChildren = List<Widget>();
           if (record == _playingRecord) {
             subtitleRowChildren.addAll([
+              Text(DateFormat('mm:ss').format(
+                  DateTime.fromMillisecondsSinceEpoch(
+                      _playingRecordPosition.inMilliseconds))),
               Slider(
                 value: _playingRecordPosition.inMilliseconds.toDouble(),
                 min: 0.0,
                 max: _playingRecordDuration.inMilliseconds.toDouble(),
                 onChanged: _seekPlayer,
-                divisions: (_playingRecordDuration.inMilliseconds > 0 ? _playingRecordDuration.inMilliseconds : 1),
+                divisions: (_playingRecordDuration.inMilliseconds > 0
+                    ? _playingRecordDuration.inMilliseconds
+                    : 1),
               ),
-              Text(DateFormat('mm:ss').format(
-                  DateTime.fromMillisecondsSinceEpoch(
-                      _playingRecordPosition.inMilliseconds))),
             ]);
           } else {
             subtitleRowChildren.add(FutureBuilder(
@@ -224,7 +228,9 @@ class _RecordsState extends State<Records> {
           return ListTile(
             selected: _selectedRecords.contains(record),
             leading: (_selectedRecords.isNotEmpty
-                ? (_selectedRecords.contains(record) ? Icon(Icons.check_circle) : Icon(Icons.circle))
+                ? (_selectedRecords.contains(record)
+                    ? Icon(Icons.check_circle)
+                    : Icon(Icons.circle))
                 : null),
             title: Text(getRecordName(record)),
             subtitle: Row(
@@ -232,17 +238,17 @@ class _RecordsState extends State<Records> {
             ),
             trailing: (record == _playingRecord)
                 ? IconButton(
-              icon: Icon(Icons.pause),
-              onPressed: () {
-                _stopPlayer();
-              },
-            )
+                    icon: Icon(Icons.pause),
+                    onPressed: () {
+                      _stopPlayer();
+                    },
+                  )
                 : IconButton(
-              icon: Icon(Icons.play_arrow),
-              onPressed: () {
-                _startPlayer(record);
-              },
-            ),
+                    icon: Icon(Icons.play_arrow),
+                    onPressed: () {
+                      _startPlayer(record);
+                    },
+                  ),
             onLongPress: () {
               if (_selectedRecords.isEmpty) {
                 _handleRecordSelection(record);
@@ -375,17 +381,41 @@ class _RecorderState extends State<Recorder> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: [
-              ElevatedButton(
+              Ink(
+                decoration: const ShapeDecoration(
+                  color: Colors.blue,
+                  shape: CircleBorder(),
+                ),
+                child: IconButton(
+                  icon: const Icon(Icons.delete),
+                  color: Colors.white,
                   onPressed: () => _deleteRecord(context),
-                  child: Icon(Icons.delete)),
-              ElevatedButton(
+                ),
+              ),
+              Ink(
+                decoration: const ShapeDecoration(
+                  color: Colors.blue,
+                  shape: CircleBorder(),
+                ),
+                child: IconButton(
+                  icon: (_isRecording
+                      ? const Icon(Icons.pause)
+                      : const Icon(Icons.play_arrow)),
+                  color: Colors.white,
                   onPressed: (_isRecording ? _pauseRecorder : _resumeRecorder),
-                  child: (_isRecording
-                      ? Icon(Icons.pause)
-                      : Icon(Icons.play_arrow))),
-              ElevatedButton(
+                ),
+              ),
+              Ink(
+                decoration: const ShapeDecoration(
+                  color: Colors.blue,
+                  shape: CircleBorder(),
+                ),
+                child: IconButton(
+                  icon: const Icon(Icons.save),
+                  color: Colors.white,
                   onPressed: () => _saveRecord(context),
-                  child: Icon(Icons.save)),
+                ),
+              ),
             ],
           ),
         ],
